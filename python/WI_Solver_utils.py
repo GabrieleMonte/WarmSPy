@@ -494,8 +494,8 @@ class Growth_factor:
     # Complicated function to fit the growth factor for a postive c:
 
     def growth_factor_fit_func_positive_c_complex(self, x, exp1, exp2, exp3, exp4, exp5, exp6, a1, a2, a3, b1, b2, b3):
-        c = self.c
-        return ((1+np.exp(a1)*x**exp1)/(1+np.exp(a2)*x**exp2))**c+np.exp(a3)*x**(exp3)*(1+b1*x**(exp4))/(1+b2*x**(exp5))+b3*x**(exp6)
+        c=self.c
+        return ((1+np.exp(a1)*x**exp1)/(1+np.exp(a2)*x**exp2)**c)+np.exp(a3)*x**(exp3)*(1+b1*x**(exp4))/(1+b2*x**(exp5))+b3*x**(exp6)
     # Simple function to fit the growth factor for a positive c:
 
     def growth_factor_fit_func_positive_c_simple(self, x, exp1, exp2, a1, a2):
