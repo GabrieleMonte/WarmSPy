@@ -1,4 +1,6 @@
 import datetime
+import os
+import multiprocessing as mp
 import numpy as np
 from scipy.optimize import curve_fit, root
 from scipy.interpolate import interp1d
@@ -25,6 +27,7 @@ class InflatonModel:
             self.M = args[0]
             self.l = args[1]
             self.m = args[2]
+            self.g_sigma=args[3] #The squared mass of the waterfall field is -M^2+g_sigma*phi^2
             return self.M**4/self.l + self.m**2*ph**2/2
         elif type=='natural': #V(\phi)= L^4*(1+cos(N*\phi/f))
             self.L=args[0]
@@ -40,6 +43,8 @@ class InflatonModel:
             self.V0 = args[0]
             self.alpha = args[1]
             self.n= args[2]
+            if self.n==1:
+                raise Exception('n must be >1')
             return self.V0*np.exp(-self.alpha*(ph/Mpl)**self.n)
         else:
             raise Exception('Potential type not recognized!')
@@ -72,6 +77,8 @@ class InflatonModel:
             self.V0 = args[0]
             self.alpha = args[1]
             self.n= args[2]
+            if self.n==1:
+                raise Exception('n must be >1')
             return -self.V0/Mpl*self.alpha*self.n*(ph/Mpl)**(self.n-1)*np.exp(-self.alpha*(ph/Mpl)**self.n)
         else:
             raise Exception('Potential type not recognized!')
@@ -102,6 +109,8 @@ class InflatonModel:
             self.V0 = args[0]
             self.alpha = args[1]
             self.n= args[2]
+            if self.n==1:
+                raise Exception('n must be >1')
             return self.V0*(self.alpha*self.n/Mpl*(ph/Mpl)**(self.n-1))**2*np.exp(-self.alpha*(ph/Mpl)**self.n)-self.alpha*self.n*(self.n-1)/(Mpl**2)*(ph/Mpl)**(self.n-2)*self.V0*np.exp(-self.alpha*(ph/Mpl)**self.n)
         else:
             raise Exception('Potential type not recognized!')
@@ -158,6 +167,7 @@ class Background:
         self.ph0 = ph0
         self.Q = Q
         self.verbose = verbose
+
     """"These functions are used to calculate the initial conditions for the background evolution, for a given value of \phi_0 and Q."""
 
     def dotphConstraint(self, dotph, ph, Q): #constraint on the derivative of the scalar field w.r.t. cosmic time t
@@ -168,16 +178,53 @@ class Background:
 
     def ICs_calculator(self, ph, Q): #calculates the initial conditions for the background evolution
         H = self.model.H
-        sol = root(self.dotphConstraint, x0=[-10**(-10)], args=(ph, Q))
+        sol = root(self.dotphConstraint, x0=[-10**(-10)*ph], args=(ph, Q))
         [dotph0] = sol.x
         rhoR0 = 3/4*Q*dotph0**2
         H0 = H(ph, dotph0, 3/4*Q*dotph0**2)
         return dotph0, rhoR0, H0
 
+    def Phi0_slow_roll_guesser(self, Ne_inflation): #calculates the initial value of \phi for the background evolution, assuming slow-roll and "Ne_inflation"" e-folds of inflation
+        Mpl = self.model.Mpl
+        Q=self.Q
+        potential_type = self.model.type
+        potential_args = self.model.args
+        if potential_type == 'monomial':
+            n = potential_args[1]
+            return Mpl*n/(np.sqrt(2*(1+Q)))*np.sqrt(1+4*Ne_inflation/n)
+        elif potential_type == 'beta_exponential':
+            l = potential_args[1]
+            beta = potential_args[2]
+            return Mpl/(l*beta)*(1-np.sqrt(l**2*(1+4*Ne_inflation*beta)/(2*(1+Q))))
+        elif potential_type == 'runaway':
+            alpha = potential_args[1]
+            n= potential_args[2]
+            exp1=((n-2)/(2*(n-1)))
+            if n==1:
+                raise Exception('n must be >1')
+            elif n==2:
+                return Mpl*np.exp(-alpha*Ne_inflation*n/(1+Q))*np.sqrt(2*(1+Q))/(alpha*n)
+            else:
+                return Mpl*(((alpha*n)**2/(2*(1+Q)))**exp1+alpha*n*Ne_inflation*(n-2)/(1+Q))**(1/(2-n))
+        elif potential_type == 'minimal':
+            M = potential_args[0]
+            g_sigma=potential_args[3]
+            return M/g_sigma
+        elif potential_type == 'natural':
+            L= potential_args[0]
+            f= potential_args[1]
+            Nphi= potential_args[2]
+            f2_eff= (f/(Mpl*Nphi))**2*(1+Q)
+            ph_end=np.arccos((1-2*f2_eff)/(1+2*f2_eff))
+            return 2*np.arcsin(np.sin(ph_end/2)*np.exp(-Ne_inflation/(2*f2_eff)))*f/Nphi
+
     def diff_eq_Ne(self, y, x, Q): #differential equation for the background evolution w.r.t. the number of e-folds Ne
         dVdph = self.model.dPotential
         H_Ne = self.model.H_Ne
         y1, y2, y3, dy1dx = y  # y1=\phi, y2=\rho_R, y3= Ne and #dy1/dx=d\phi/dNe
+        #if y2 is negative, the differential equation return an error and quits the integration:
+        if y2 < 0:
+            raise Exception('rho_R is negative')
         eq_y1 = -3*(1+Q)*dy1dx-dVdph(y1)/(H_Ne(y1, dy1dx, y2))**2
         eq_y2 = -4*y2+3*(H_Ne(y1, dy1dx, y2))**2*Q*dy1dx**2
         dydx = [dy1dx, eq_y2, 1, eq_y1]  # example differential equation
@@ -240,13 +287,14 @@ class Background:
         return [phi_func(tauvals), dotphi_func(tauvals), ddotphi_func(tauvals), epsH_func(tauvals), etaH_func(tauvals), H_func(tauvals), Tr_func(tauvals)]
 
     # Testing the intial conditions by iteratively solving the background equations:
-    def Bg_solver_test(self, Ne_max, Ne_len, Ne_inflation, tolerance=10**(-3), learning_rate=0.03, max_iter=500, verbose=False):
+    def Bg_solver_test(self, Ne_max, Ne_len, Ne_inflation, tolerance=10**(-3), learning_rate=0.03, max_iter=500, verbose=False,rtol_value=1.0e-6,atol_value=1.0e-10):
         if Ne_max-Ne_inflation < 6:
             print(
                 'Error: Ne_max-Ne_inflation should be larger than 6, otherwise the solution will not have enough e-folds for the perturbations to evolve!')
             return
-
+        or_learning_rate = learning_rate
         ph0 = self.ph0
+        type= self.model.type
         ph0_or = ph0  # Original value of ph0
         model = self.model
         V = model.Potential
@@ -257,6 +305,8 @@ class Background:
         Nes = np.linspace(0, Ne_max, Ne_len)
         i = 0
         while i in range(max_iter):
+            if verbose:
+                print(ph0)
             if ph0 < 0:
                 # When ph0<0, we decrease the learning rate and reset ph0 to its original value:
                 learning_rate = learning_rate/2
@@ -267,38 +317,37 @@ class Background:
                 dotph0, rhoR0, H0 = self.ICs_calculator(ph0, Q)
                 y_ic = [ph0, rhoR0, 0, dotph0/H0]
                 i += 1
-            if verbose:
-                print(ph0)
-            y = odeint(self.diff_eq_Ne, y_ic, Nes, args=(Q,))
-            if np.isnan(y).any() == True:
-                print(
+            if ph0>0:
+                y = odeint(self.diff_eq_Ne, y_ic, Nes, args=(Q,),rtol=rtol_value,atol=atol_value)
+                if np.isnan(y).any() == True:
+                    print(
                     'phi0 is too small, please increase its original value or modify the learning rate!')
-                return
-            else:
-                epsHs, Nes = self.Compute_cosmo_pars_Ne(y, Q, True)
-                epsHmax_ind = min(range(len(epsHs)), key=lambda i: abs(epsHs[i]-1))
-                if verbose:
-                    print(np.max(epsHs))
-                if np.max(epsHs) < (1-tolerance):
-                    ph0 += (V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) / \
-                        np.max(epsHs)*learning_rate
-                    # if ph0>0, reset the learning rate to its original value:
-                    if ph0 > 0 and learning_rate < 0.03:
-                        learning_rate = learning_rate*2
-                    dotph0, rhoR0, H0 = self.ICs_calculator(ph0, Q)
-                    y_ic = [ph0, rhoR0, 0, dotph0/H0]
+                    return
+                else:
+                    epsHs, Nes = self.Compute_cosmo_pars_Ne(y, Q, True)
+                    epsHmax_ind = min(range(len(epsHs)), key=lambda i: abs(epsHs[i]-1))
                     if verbose:
-                        print(ph0)
-                    i += 1
-                if (np.max(epsHs) >= (1-tolerance)) and (int(Nes[epsHmax_ind]) < (Ne_inflation+8)):
-                    ph0 += (V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) / \
+                        print(np.max(epsHs))
+                    if np.max(epsHs) < (1-tolerance):
+                        #ph0 += (V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) / \
+                        #    np.max(epsHs)*learning_rate
+                        ph0 += (V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) / \
+                            np.max(epsHs)*learning_rate
+                        # if ph0>0, reset the learning rate to its original value:
+                        if ph0 > 0 and learning_rate < or_learning_rate:
+                            learning_rate = learning_rate*2
+                        dotph0, rhoR0, H0 = self.ICs_calculator(ph0, Q)
+                        y_ic = [ph0, rhoR0, 0, dotph0/H0]
+                        i += 1
+                    if (np.max(epsHs) >= (1-tolerance)) and (int(Nes[epsHmax_ind]) < (Ne_inflation+8)):
+                        ph0 += (V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) / \
                         np.max(epsHs)*learning_rate
-                    dotph0, rhoR0, H0 = self.ICs_calculator(ph0, Q)
-                    y_ic = [ph0, rhoR0, 0, dotph0/H0]
-                    # print(ph0)
-                    i += 1
-                if (np.max(epsHs) >= (1-tolerance)) and (int(Nes[epsHmax_ind]) >= (Ne_inflation+8)):
-                    break
+                        dotph0, rhoR0, H0 = self.ICs_calculator(ph0, Q)
+                        y_ic = [ph0, rhoR0, 0, dotph0/H0]
+                        # print(ph0)
+                        i += 1
+                    if (np.max(epsHs) >= (1-tolerance)) and (int(Nes[epsHmax_ind]) >= (Ne_inflation+8)):
+                        break
             if i == max_iter-1:
                 print('Error: the solution has not converged, try to either: (1) start from different initial conditions, (2) increase the number of max iterations, (3) modify the learning rate.')
                 return
@@ -378,22 +427,23 @@ class Perturbations:
         negligible_epsH_etaH = self.negligible_epsH_etaH
         Mpl = model.Mpl
         delphi0, ddelphidtau0, delrhor0, Psir0, varphi0 = p_ics
-        phv0, dotphv0, ddotphv0, epsHv0, etaHv0, Hv0, Tv0 = b_ics
+        phv0, dotphv0, ddotphv0, epsHv0_val, etaHv0_val, Hv0, Tv0 = b_ics
+        epsHv0=0
+        etaHv0=0
         exp2tau = np.exp(2*tau)  # corresponds to z^2
-        if negligible_epsH_etaH == True:
-            epsHv0 = np.zeros(len(epsHv0))
-            etaHv0 = np.zeros(len(etaHv0))
+        if negligible_epsH_etaH == False:
+            epsHv0 = epsHv0_val
+            etaHv0 = etaHv0_val
         d2delphidtau2 = (1/(1-epsHv0)**(2))*(-epsHv0*(1+etaHv0-epsHv0)*ddelphidtau0+3*(1+Q)*(1-epsHv0)*ddelphidtau0-(exp2tau+model.d2Potential(phv0)/Hv0**2-3*m*Q*dotphv0/(phv0*Hv0))
                                            * delphi0-c/(Hv0*dotphv0)*delrhor0+(2*ddotphv0/Hv0**2-3/Hv0*(1+Q)*dotphv0)*varphi0+(dotphv0/Hv0**2)*(2/(Mpl)**2*(dotphv0*delphi0-Psir0)+Hv0*varphi0))
         ddelrhordtau = 1/(1-epsHv0)*((4-3*c*Q*dotphv0**2/(4*model.rho_R(Tv0)))*delrhor0-Hv0*exp2tau*Psir0+6*Q*Hv0*dotphv0*(1-epsHv0)*ddelphidtau0 +
                                    3*m*Q*dotphv0**2/phv0*delphi0-2*model.rho_R(Tv0)/(2*(Mpl)**2*Hv0)*(dotphv0*delphi0-Psir0)-3*(Q*dotphv0**2+4*model.rho_R(Tv0)/3)*varphi0)
         dPsirdtau = 1/(1-epsHv0)*(3*Psir0+3*Q*dotphv0*delphi0 +
                                 delrhor0/(3*Hv0)-4*model.rho_R(Tv0)*varphi0/(3*Hv0))
+        dvarphidtau = 0
         if metric_perturbations:
             dvarphidtau = 1/(1-epsHv0)*(varphi0+1/(2*(Mpl**2)*Hv0)
                                       * (dotphv0*delphi0-Psir0))
-        else:
-            dvarphidtau = 0
         return ddelphidtau0, d2delphidtau2, ddelrhordtau, dPsirdtau, dvarphidtau
 
     def solve(self, val, verbose=False):
@@ -413,55 +463,62 @@ class Perturbations:
         H_bg = self.H_bg
         T_bg = self.T_bg
         IC = self.IC
-        hatR2 = np.zeros((Nruns, N))
         # Compute the noise terms:
         Noise_th = Gamma_eff(H_bg, Q, T_bg) * \
-            np.exp(3*tauvals/2)*dW(-dtau, (Nruns, N)) #Thermal noise
+            np.exp(3*tauvals/2)*dW(-dtau, N) #Thermal noise
         Noise_qu = Xi_q(H_bg, Q, T_bg)*np.exp(3*tauvals/2) * \
-            dW(-dtau, (Nruns, N)) #Quantum noise
+            dW(-dtau, N) #Quantum noise
         if verbose == True:
             print('Computed the noise terms, now solving the perturbation equations ...')
-        for j in trange(Nruns):
-            delphi_soln = np.zeros(N)  # \delta\hat{\phi}
-            ddelphidtau_soln = np.zeros(N)  # d{\delta\hat{\phi}}/d\tau
-            delrhor_soln = np.zeros(N)  # \delta\hat{\rho}_r
-            Psir_soln = np.zeros(N)  # \hat{\Psi}_r
-            varphi_soln = np.zeros(N)  # \hat{\varphi}
-            delphi_soln[0], ddelphidtau_soln[0], delrhor_soln[0], Psir_soln[0], varphi_soln[0] = IC
-            newIC = IC
-            for i in range(N-1):
-                bgICs = [phi_bg[i], dotphi_bg[i], ddotphi_bg[i],
+        delphi_soln = np.zeros(N)  # \delta\hat{\phi}
+        ddelphidtau_soln = np.zeros(N)  # d{\delta\hat{\phi}}/d\tau
+        delrhor_soln = np.zeros(N)  # \delta\hat{\rho}_r
+        Psir_soln = np.zeros(N)  # \hat{\Psi}_r
+        varphi_soln = np.zeros(N)  # \hat{\varphi}
+        delphi_soln[0], ddelphidtau_soln[0], delrhor_soln[0], Psir_soln[0], varphi_soln[0] = IC
+        newIC = IC
+        for i in range(N-1):
+            bgICs = [phi_bg[i], dotphi_bg[i], ddotphi_bg[i],
                          epsH_bg[i], etaH_bg[i], H_bg[i], T_bg[i]] #Initial conditions for the background
-                derivs = self.EOMs(newIC, bgICs, tauvals[i], c, m, Q) #Solve the perturbation equations
+            derivs = self.EOMs(newIC, bgICs, tauvals[i], c, m, Q) #Solve the perturbation equations
                 # Update the solutions:
-                ddelphi = derivs[0] * dtau
-                ddelphidtau = derivs[1] * dtau
-                ddelrhor = derivs[2] * dtau
-                dPsir = derivs[3] * dtau
-                dvarphi = derivs[4] * dtau
-                delphi_soln[i+1] = delphi_soln[i] + ddelphi
-                ddelphidtau_soln[i+1] = ddelphidtau_soln[i] + \
-                    ddelphidtau + Noise_th[j][i] + Noise_qu[j][i]
-                delrhor_soln[i+1] = delrhor_soln[i] + ddelrhor
-                Psir_soln[i+1] = Psir_soln[i] + dPsir
-                varphi_soln[i+1] = varphi_soln[i] + dvarphi
-                newIC = [delphi_soln[i+1], ddelphidtau_soln[i+1],
+            ddelphi = derivs[0] * dtau
+            ddelphidtau = derivs[1] * dtau
+            ddelrhor = derivs[2] * dtau
+            dPsir = derivs[3] * dtau
+            dvarphi = derivs[4] * dtau
+            delphi_soln[i+1] = delphi_soln[i] + ddelphi
+            ddelphidtau_soln[i+1] = ddelphidtau_soln[i] + \
+                    ddelphidtau + Noise_th[i] + Noise_qu[i]
+            delrhor_soln[i+1] = delrhor_soln[i] + ddelrhor
+            Psir_soln[i+1] = Psir_soln[i] + dPsir
+            varphi_soln[i+1] = varphi_soln[i] + dvarphi
+            newIC = [delphi_soln[i+1], ddelphidtau_soln[i+1],
                          delrhor_soln[i+1], Psir_soln[i+1], varphi_soln[i+1]]
-            #Compute the power spectrum:
-            hatR2[j] = model.Rpowerspec(
+        #Compute the power spectrum:
+        hatR2= model.Rpowerspec(
                 delphi_soln, delrhor_soln, Psir_soln, varphi_soln, H_bg, T_bg, dotphi_bg)**2
-            del delphi_soln, ddelphidtau_soln, delrhor_soln, varphi_soln, Psir_soln, newIC,
-        #Take the average and standard deviation of the power spectrum over the Nruns:
-        hatR2avg = np.mean(hatR2, axis=0)
-        hatR2std = np.std(hatR2, axis=0)
-        index_hor = np.argmin(np.abs(tauvals)) #The index for which \tau=0, i.e. "Ne_inflation" e-folds before the end of inflation
-        if verbose:
-            print(index_hor)
-        hatR2avg_hor = 1/(2*np.pi**2)*hatR2avg[index_hor]
-        hatR2std_hor = 1/(2*np.pi**2)*hatR2std[index_hor]
-        del Noise_qu, Noise_th
-        return hatR2avg_hor, hatR2std_hor
+        return hatR2
 
+    def Pool_solver(self, vals, n_cores=0, verbose=False):
+        tauvals=self.tauvals
+        pool_count=os.cpu_count()
+        if n_cores > pool_count: #print error
+            print('Error: n_cores is greater than the number of cores available')
+        else:
+            if n_cores==0:
+                n_cores=pool_count-2
+            with mp.Pool(processes=n_cores) as pool:
+                res = pool.map(self.solve, vals)
+                hatR2run = np.array(res)
+                hatR2avg = np.mean(hatR2run, axis=0)
+                hatR2std = np.std(hatR2run, axis=0)
+                index_hor = np.argmin(np.abs(tauvals)) #The index for which \tau=0, i.e. "Ne_inflation" e-folds before the end of inflation
+                if verbose:
+                    print(index_hor)
+                hatR2avg_hor = 1/(2*np.pi**2)*hatR2avg[index_hor]
+                hatR2std_hor = 1/(2*np.pi**2)*hatR2std[index_hor]
+            return hatR2avg_hor, hatR2std_hor
 
 class Growth_factor:
     def __init__(self, model, Qvals, ph0s, hatR2avg, hatR2std, Nruns, Ne_max, Ne_len, tauvals, Ne_inflation, c, m):
