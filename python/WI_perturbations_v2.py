@@ -66,7 +66,7 @@ a1 = np.pi**2/30*g
 
 if not os.path.exists(home_dir+'WI_PowerSpectra_data'):
     os.makedirs(home_dir+'WI_PowerSpectra_data')
-potential_type='natural'
+potential_type='beta_exponential'
 
 ICs_Q0_ph0=np.loadtxt(home_dir+'ICS_ph0-Q0s/ICS_ph0-Q0s_'+potential_type+'_Ne'+str(int(Neinflation))+'.txt')
 
@@ -77,14 +77,21 @@ lv = 10**(-14)  # value of lambda
 
 if potential_type=='quartic':
     Model = InflatonModel('monomial', [lv, 4], g, a1, Mpl)
-'''
+
 #Example 2: Natural Inflation
 
 f = 5  # value of decay constant f
 L= 10**(16)/(2.42*10**(18))  # value of \Lambda in units of Mpl
 Nphi=1
 Model = InflatonModel('natural', [ L, f, Nphi], g, a1, Mpl)
+'''
+#Example 3: Beta-exponential
 
+beta=0.3
+lv=0.05
+V0=10**(-23)
+
+Model = InflatonModel(potential_type, [V0, lv,beta], g, a1, Mpl)
 
 Q0s=ICs_Q0_ph0[:,0]
 ph0s=ICs_Q0_ph0[:,1]
@@ -95,7 +102,7 @@ cm_cases=[[0,0],[3,0],[1,0],[-1,0]]
 #cm_cases=[[0,0]]
 
 
-l=1
+l=0
 while l in range(len(cm_cases)):
     cval,mval=cm_cases[l]
     numQs=len(Q0s)
