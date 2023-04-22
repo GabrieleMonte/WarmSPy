@@ -266,7 +266,7 @@ class Background:
             return
         phis, dotphis, ddotphis, rhoRs, Hs, epsHs, etaHs, Nes = self.Compute_cosmo_pars_Ne(
             y, Q)
-        if max(epsHs) < (1-tolerance):
+        if round(max(epsHs), 3) < (1-tolerance):
             print(max(epsHs))
             print(
                 'Error: the solution has epsH<1, make sure the initial conditions are correct first!')
@@ -567,6 +567,9 @@ class Growth_factor:
         c=self.c
         return ((1+np.exp(a1)*x**exp1)/(1+np.exp(a2)*x**exp2)**c)+np.exp(a3)*x**(exp3)*(1+b1*x**(exp4))/(1+b2*x**(exp5))+b3*x**(exp6)
 
+    #Second version of complicated function to fit the growth factor for a positive c:
+    def growth_factor_fit_func_positive_c_complex_v2(self, x, a1,a2,exp1,exp2,exp3):
+        return 1 + a1*x**exp1/(1 + a2*x**exp2)**exp3
     # Simple function to fit the growth factor for a positive c:
     def growth_factor_fit_func_positive_c_simple(self, x, exp1, exp2, a1, a2):
         return 1+a1*x**(exp1)+a2*x**(exp2)
@@ -599,6 +602,15 @@ class Growth_factor:
                               0.01, 0.01, 0, 0, 0, 0, 0, 0]
                 up_bounds = [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15]
             popt, pcov = curve_fit(self.growth_factor_fit_func_positive_c_complex, Qvals,
+                                   growth_factor_signal, sigma=growth_factor_noise, bounds=(low_bounds, up_bounds))
+        if method == 'complex_v2' and c > 0:
+            if make_your_own_bounds:
+                low_bounds = lower_bounds
+                up_bounds = upper_bounds
+            else:
+                low_bounds = [0,0,0.01, 0.01, 0.01]
+                up_bounds = [15, 15, 15, 15, 15]
+            popt, pcov = curve_fit(self.growth_factor_fit_func_positive_c_complex_v2, Qvals,
                                    growth_factor_signal, sigma=growth_factor_noise, bounds=(low_bounds, up_bounds))
         if method == 'simple' and c > 0:
             if make_your_own_bounds:
