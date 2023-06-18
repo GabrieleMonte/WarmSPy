@@ -20,12 +20,16 @@ For more details, please consult our research paper (link below).
 To use WarmSPy, follow these steps:
 
 1. Clone the GitHub repository using the following command:
-'git clone https://github.com/your-username/WarmSPy.git'
+```sh
+git clone https://github.com/your-username/WarmSPy.git
+```
 
 2. Make sure you have Python installed on your system. WarmSPy is compatible with Python 3.
 
 3. Install the required dependencies. WarmSPy relies on the following Python packages: numpy,scipy, matplotlib, os, multiprocessing.The simplest way to install these dependencies is by using pip, e.g.:
-'pip install numpy'
+```sh
+pip install numpy
+```
 
 ## Usage
 WarmSPy provides example notebooks to help you understand how to use the code effectively. These notebooks demonstrate the various functionalities of WarmSPy and guide you through different use cases. You can find these example notebooks in the repository.
