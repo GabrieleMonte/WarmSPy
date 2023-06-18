@@ -23,6 +23,11 @@ class InflatonModel:
             self.l = args[0]
             self.n = args[1]
             return self.l/np.math.factorial(self.n)*ph**self.n
+        elif type == 'hilltop': #V(\phi)= V0*(1-|\gamma|/2n*(phi/Mpl)^2n)
+            self.l=args[0]
+            self.n=args[1]
+            self.ph0=args[2]
+            return self.l*Mpl**4/(2*self.n)*(1-(ph/self.ph0)**(2*self.n))**2
         elif type == 'minimal': #V(\phi)= M^4/l + m^2*\phi^2/2
             self.M = args[0]
             self.l = args[1]
@@ -58,11 +63,11 @@ class InflatonModel:
             self.l = args[0]
             self.n = args[1]
             return self.l/np.math.factorial(self.n-1)*ph**(self.n-1)
-        elif type == 'minimal':
-            self.M = args[0]
-            self.l = args[1]
-            self.m = args[2]
-            return self.m**2*ph
+        elif type == 'hilltop':
+            self.l=args[0]
+            self.n=args[1]
+            self.ph0=args[2]
+            return -2*self.l*Mpl**4/self.ph0*(ph/self.ph0)**(2*self.n-1)*(1-(ph/self.ph0)**(2*self.n))
         elif type=='natural':
             self.L=args[0]
             self.f=args[1]
@@ -73,13 +78,6 @@ class InflatonModel:
             self.l = args[1]
             self.beta = args[2]
             return -self.V0*self.l/Mpl*(1-self.l*self.beta*ph/Mpl)**(1/self.beta-1)
-        elif type == 'runaway':
-            self.V0 = args[0]
-            self.alpha = args[1]
-            self.n= args[2]
-            if self.n==1:
-                raise Exception('n must be >1')
-            return -self.V0/Mpl*self.alpha*self.n*(ph/Mpl)**(self.n-1)*np.exp(-self.alpha*(ph/Mpl)**self.n)
         else:
             raise Exception('Potential type not recognized!')
 
@@ -92,9 +90,11 @@ class InflatonModel:
             self.l = args[0]
             self.n = args[1]
             return self.l/np.math.factorial(self.n-2)*ph**(self.n-2)
-        elif type == 'minimal':
-            self.m = args[2]
-            return self.m**2
+        elif type == 'hilltop':
+            self.l=args[0]
+            self.n=args[1]
+            self.ph0=args[2]
+            return 2*self.l*Mpl**4*(-4*self.n*(2*self.n-1)/self.ph0**2*(ph/self.ph0)**(2*self.n-2)*(1-(ph/self.ph0)**(2*self.n))+8*self.n**2/self.ph0**2*(ph/self.ph0)**(4*self.n-2))
         elif type=='natural':
             self.L=args[0]
             self.f=args[1]
@@ -105,13 +105,6 @@ class InflatonModel:
             self.l = args[1]
             self.beta = args[2]
             return self.V0*self.l**2/Mpl**2*(1-self.beta)*(1-self.l*self.beta*ph/Mpl)**(1/self.beta-2)
-        elif type == 'runaway':
-            self.V0 = args[0]
-            self.alpha = args[1]
-            self.n= args[2]
-            if self.n==1:
-                raise Exception('n must be >1')
-            return self.V0*(self.alpha*self.n/Mpl*(ph/Mpl)**(self.n-1))**2*np.exp(-self.alpha*(ph/Mpl)**self.n)-self.alpha*self.n*(self.n-1)/(Mpl**2)*(ph/Mpl)**(self.n-2)*self.V0*np.exp(-self.alpha*(ph/Mpl)**self.n)
         else:
             raise Exception('Potential type not recognized!')
 
@@ -250,7 +243,7 @@ class Background:
             return ph_vals, dotph_vals, ddotph_vals, rhoR_vals, H_vals, epsH_vals, etaH_vals, Ne_vals
 
     # Solving the background equations:
-    def Bg_solver_tau(self, Ne_max, Ne_len, tauvals, Ne_inflation, tolerance=10**(-3)):
+    def Bg_solver_tau(self, Ne_max, Ne_len, tauvals, Ne_inflation, tolerance=10**(-3), rtol_value=1.0e-6,atol_value=1.0e-10):
         verbose = self.verbose
         ph0 = self.ph0
         Q = self.Q
@@ -258,7 +251,7 @@ class Background:
         y_ic = [ph0, rhoR0, 0, dotph0/H0]
         model = self.model
         Nes = np.linspace(0, Ne_max, Ne_len)
-        y = odeint(self.diff_eq_Ne, y_ic, Nes, args=(Q,))
+        y = odeint(self.diff_eq_Ne, y_ic, Nes, args=(Q,),rtol=rtol_value,atol=atol_value)
         # If y has NaN values, I want to return an error and exit the code:
         if np.isnan(y).any():
             print(
@@ -287,7 +280,7 @@ class Background:
         return [phi_func(tauvals), dotphi_func(tauvals), ddotphi_func(tauvals), epsH_func(tauvals), etaH_func(tauvals), H_func(tauvals), Tr_func(tauvals)]
 
     # Testing the intial conditions by iteratively solving the background equations:
-    def Bg_solver_test(self, Ne_max, Ne_len, Ne_inflation, tolerance=10**(-3), learning_rate=0.03, max_iter=500, verbose=False,rtol_value=1.0e-6,atol_value=1.0e-10):
+    def Bg_solver_test(self, Ne_max, Ne_len, Ne_inflation, tolerance=1*10**(-3), learning_rate=0.03, max_iter=1000, verbose=False,rtol_value=1.0e-6,atol_value=1.0e-10):
         if Ne_max-Ne_inflation < 6:
             print(
                 'Error: Ne_max-Ne_inflation should be larger than 6, otherwise the solution will not have enough e-folds for the perturbations to evolve!')
@@ -329,24 +322,20 @@ class Background:
                     if verbose:
                         print(np.max(epsHs))
                     if np.max(epsHs) < (1-tolerance):
-                        #ph0 += (V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) / \
-                        #    np.max(epsHs)*learning_rate
-                        ph0 += (V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) / \
-                            np.max(epsHs)*learning_rate
+                        ph0 += (dVdph(ph0)/V(ph0))*(np.max(epsHs)-1) * np.min(epsHs)*learning_rate
                         # if ph0>0, reset the learning rate to its original value:
                         if ph0 > 0 and learning_rate < or_learning_rate:
                             learning_rate = learning_rate*2
                         dotph0, rhoR0, H0 = self.ICs_calculator(ph0, Q)
                         y_ic = [ph0, rhoR0, 0, dotph0/H0]
                         i += 1
-                    if (np.max(epsHs) >= (1-tolerance)) and (int(Nes[epsHmax_ind]) < (Ne_inflation+8)):
-                        ph0 += (V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) / \
-                        np.max(epsHs)*learning_rate
+                    if (np.max(epsHs) >= (1-tolerance)) and (int(Nes[epsHmax_ind]) < (Ne_max-1)):
+                        ph0 += (dVdph(ph0)/V(ph0))*(np.max(epsHs)-1) * np.min(epsHs)*learning_rate
                         dotph0, rhoR0, H0 = self.ICs_calculator(ph0, Q)
                         y_ic = [ph0, rhoR0, 0, dotph0/H0]
                         # print(ph0)
                         i += 1
-                    if (np.max(epsHs) >= (1-tolerance)) and (int(Nes[epsHmax_ind]) >= (Ne_inflation+8)):
+                    if (np.max(epsHs) >= (1-tolerance)) and (int(Nes[epsHmax_ind]) >= (Ne_max-1)):
                         break
             if i == max_iter-1:
                 print('Error: the solution has not converged, try to either: (1) start from different initial conditions, (2) increase the number of max iterations, (3) modify the learning rate.')
@@ -384,14 +373,16 @@ def dW(delta_t, shape):
     return np.random.normal(loc=0.0, scale=np.sqrt(delta_t), size=shape)
 
 #Amplitude of the Thermal Noise:
-def Gamma_eff(H, Q, T):
+def Xi_T(H, Q, T):
     return np.sqrt(6*H*Q*T)
 
 #Amplitude of the Quantum Noise:
 def Xi_q(H, Q, T):
     nk_exp = np.exp(-H/T)
     nBE = nk_exp/(1-nk_exp)
-    return np.sqrt((1+2*nBE)/np.pi**(3/2))*H*(9+12*np.pi*Q)**(1/4)
+    return np.sqrt((1+2*nBE)/np.pi)*H*(9+12*np.pi*Q)**(1/4)
+
+
 ########################################################################################################################
 
 class Perturbations:
@@ -412,7 +403,7 @@ class Perturbations:
         ##############################
         ###### Initial conditions#####
         ##############################
-        self.delphi_ini = Gamma_eff(self.H_bg[0], self.Q, self.T_bg[0]) # \delta\hat{\phi}(0)
+        self.delphi_ini = Xi_T(self.H_bg[0], self.Q, self.T_bg[0]) # \delta\hat{\phi}(0)
         self.ddelphidtau_ini = 0  # d{\delta\hat{\phi}}/d\tau (0)
         self.delrhor_ini = 0 # \delta\hat{\rho}_R(0)
         self.Psir_ini = 0 # \hat{\Psi}_R(0)
@@ -464,7 +455,7 @@ class Perturbations:
         T_bg = self.T_bg
         IC = self.IC
         # Compute the noise terms:
-        Noise_th = Gamma_eff(H_bg, Q, T_bg) * \
+        Noise_th = Xi_T(H_bg, Q, T_bg) * \
             np.exp(3*tauvals/2)*dW(-dtau, N) #Thermal noise
         Noise_qu = Xi_q(H_bg, Q, T_bg)*np.exp(3*tauvals/2) * \
             dW(-dtau, N) #Quantum noise
@@ -520,7 +511,7 @@ class Perturbations:
                 hatR2std_hor = 1/(2*np.pi**2)*hatR2std[index_hor]
             return hatR2avg_hor, hatR2std_hor
 
-class Growth_factor:
+class Scalar_Dissipation_Function:
     def __init__(self, model, Qvals, ph0s, hatR2avg, hatR2std, Nruns, Ne_max, Ne_len, tauvals, Ne_inflation, c, m):
         self.Qvals = Qvals
         self.ph0s = ph0s
@@ -535,9 +526,9 @@ class Growth_factor:
         self.tauvals = tauvals
         self.Ne_inflation = Ne_inflation
 
-    """Computes the growth factor of the curvature perturbations for a given c and m. This is simply defined as the ratio betweeen the numerically
+    """Computes the scalar dissipation function of the curvature perturbations for a given c and m. This is simply defined as the ratio betweeen the numerically
     obtained power spectrum divided by the analytic power spectrum valide for c=0, both evaluated "Ne_inflation" e-folds before the end of inflation."""
-    def growth_factor(self, analytic_power_spectrum=False,deltaR2_analytic =[]):
+    def scalar_dissipation_function(self, analytic_power_spectrum=False,deltaR2_analytic =[]):
         Nruns = self.Nruns
         hatR2avg = self.hatR2avg
         hatR2std = self.hatR2std
@@ -558,59 +549,58 @@ class Growth_factor:
                 DeltaR2_analytic[i] = Bg.analytic_power_spectrum(Ne_max, Ne_len, tauvals, Ne_inflation)
             print('Analytic power spectrum computed!')
         # Computing the growth factor, its signal and noise:
-        growth_factor_signal = hatR2avg/DeltaR2_analytic
-        growth_factor_noise = hatR2std/DeltaR2_analytic*1/np.sqrt(Nruns)
-        return growth_factor_signal, growth_factor_noise
+        GQ_signal = hatR2avg/DeltaR2_analytic
+        GQ_noise = hatR2std/DeltaR2_analytic*1/np.sqrt(Nruns)
+        return GQ_signal, GQ_noise
 
     #Complicated function to fit the growth factor for a positive c:
-    def growth_factor_fit_func_positive_c_complex(self, x, exp1, exp2, exp3, exp4, exp5, exp6, a1, a2, a3, b1, b2, b3):
-        c=self.c
-        return ((1+np.exp(a1)*x**exp1)/(1+np.exp(a2)*x**exp2)**c)+np.exp(a3)*x**(exp3)*(1+b1*x**(exp4))/(1+b2*x**(exp5))+b3*x**(exp6)
-
+    def GQ_fit_func_positive_c_log(self, x, a1,a2,a3,a4):
+        y=np.log10(1+x)
+        return np.exp(a1*y+a2*y**2+a3*y**3+a4*y**4)
     # Simple function to fit the growth factor for a positive c:
-    def growth_factor_fit_func_positive_c_simple(self, x, exp1, exp2, a1, a2):
+    def GQ_fit_func_positive_c_pol(self, x, exp1, exp2, a1, a2):
         return 1+a1*x**(exp1)+a2*x**(exp2)
 
     # Function to fit the growth factor for a negative c:
-    def growth_factor_fit_func_negative_c(self, x, exp1, exp2, a1, a2, a3, a4):
-        return (1+a1*x**exp1)**a2/(1+a3*x**exp2)**a4
+    def GQ_fit_func_negative_c_pol(self, x, exp1, exp2, exp3, a1, a2):
+        return (1+a1*x**exp1)/(1+a2*x**exp2)**exp3
 
     #Function that determines the best fitting function for the growth factor using the curve_fit function from scipy.optimize:
-    def growth_factor_fit(self, method='complex', make_your_own_bounds=False, lower_bounds=0, upper_bounds=0, output_data=False, analytic_power_spectrum=False, deltaR2_analytic=[]):
+    def scalar_dissipation_function_fit(self, method='log', make_your_own_bounds=False, lower_bounds=0, upper_bounds=0, output_data=False, analytic_power_spectrum=False, deltaR2_analytic=[]):
         global popt, pcov, low_bounds, up_bounds
         Qvals = self.Qvals
         c = self.c
-        growth_factor_signal, growth_factor_noise = self.growth_factor(analytic_power_spectrum, deltaR2_analytic)
+        GQ_signal, GQ_noise = self.scalar_dissipation_function(analytic_power_spectrum, deltaR2_analytic)
         if c < 0:
             if make_your_own_bounds:
                 low_bounds = lower_bounds
                 up_bounds = upper_bounds
             else:
-                low_bounds = [0.1, 0.1, 0, 0, 0.1, 0.1]
-                up_bounds = [5, 5, 5, 5, 5, 5]
-            popt, pcov = curve_fit(self.growth_factor_fit_func_negative_c, Qvals,
-                                   growth_factor_signal, sigma=growth_factor_noise, bounds=(low_bounds, up_bounds))
-        if method == 'complex' and c > 0:
+                low_bounds = [0.1, 0.1, 0.1,0, 0 ]
+                up_bounds = [10, 10, 10, 10, 10]
+            popt, pcov = curve_fit(self.GQ_fit_func_negative_c_pol, Qvals,
+                                  GQ_signal, sigma=GQ_noise, bounds=(low_bounds, up_bounds))
+        if method == 'log' and c > 0:
             if make_your_own_bounds:
                 low_bounds = lower_bounds
                 up_bounds = upper_bounds
             else:
-                low_bounds = [0.01, 0.01, 0.01, 0.01,
-                              0.01, 0.01, 0, 0, 0, 0, 0, 0]
-                up_bounds = [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15]
-            popt, pcov = curve_fit(self.growth_factor_fit_func_positive_c_complex, Qvals,
-                                   growth_factor_signal, sigma=growth_factor_noise, bounds=(low_bounds, up_bounds))
-        if method == 'simple' and c > 0:
+                low_bounds = [ -15, -15, -15,-15]
+                up_bounds = [ 10, 10, 10,10]
+            popt, pcov = curve_fit(self.GQ_fit_func_positive_c_log, Qvals,
+                                   GQ_signal, sigma=GQ_noise, bounds=(low_bounds, up_bounds))
+
+        if method == 'pol' and c > 0:
             if make_your_own_bounds:
                 low_bounds = lower_bounds
                 up_bounds = upper_bounds
             else:
-                low_bounds = [0.1, 0.1, 0, 0]
+                low_bounds = [0.01, 0.01, 0, 0]
                 up_bounds = [10, 10, 10, 10]
-            popt, pcov = curve_fit(self.growth_factor_fit_func_positive_c_simple, Qvals,
-                                   growth_factor_signal, sigma=growth_factor_noise, bounds=(low_bounds, up_bounds))
+            popt, pcov = curve_fit(self.GQ_fit_func_positive_c_pol, Qvals,
+                                   GQ_signal, sigma=GQ_noise, bounds=(low_bounds, up_bounds))
         perr = np.sqrt(np.diag(pcov))
         if output_data:
-            return popt, perr, growth_factor_signal, growth_factor_noise
+            return popt, perr, GQ_signal, GQ_noise
         else:
             return popt, perr
