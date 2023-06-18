@@ -1,4 +1,4 @@
-# WarmSPy (Warm Scalar Perturbations)
+# WarmSPy (Warm Inflation Scalar Perturbations)
 
 WarmSPy release 1.0 (2023). This code has been written by Gabriele Montefalcone, Vikas Aragam and Dr. Luca Visinelli.
 
