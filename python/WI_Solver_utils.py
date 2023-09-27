@@ -363,7 +363,8 @@ class Background:
                     if verbose:
                         print(r"The maximum value of $\epsilon_H$ is: ", np.max(epsHs))
                     if (np.max(epsHs)-(1-tolerance)) <=0 :
-                        ph0 += (dVdph(ph0)/V(ph0))*(np.max(epsHs)-1) * np.max(epsHs)*learning_rate
+                        ph0 +=(V(ph0)/dVdph(ph0))*(np.max(epsHs)-1) /np.max(epsHs)*learning_rate
+                        
                         # if ph0>0, reset the learning rate to its original value:
                         if ph0 > 0 and learning_rate < or_learning_rate:
                             learning_rate = learning_rate*2
