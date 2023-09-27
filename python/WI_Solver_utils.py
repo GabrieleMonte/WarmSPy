@@ -569,7 +569,7 @@ class Perturbations:
 
 
 class Scalar_Dissipation_Function:
-    def __init__(self, model, Qvals, ph0s, hatR2avg, hatR2std, Nruns, Ne_max, Ne_len, tauvals, Ne_inflation, c, m):
+    def __init__(self, model, Qvals, ph0s, hatR2avg, hatR2std, Nruns, Ne_max, Ne_len, tauvals, Ne_inflation, c, m,Qconstant=True):
         self.Qvals = Qvals
         self.ph0s = ph0s
         self.hatR2avg = hatR2avg
@@ -582,7 +582,7 @@ class Scalar_Dissipation_Function:
         self.Ne_len = Ne_len
         self.tauvals = tauvals
         self.Ne_inflation = Ne_inflation
-
+        self.Qconstant = Qconstant
     """Computes the scalar dissipation function of the curvature perturbations for a given c and m. This is simply defined as the ratio betweeen the numerically
     obtained power spectrum divided by the analytic power spectrum valide for c=0, both evaluated "Ne_inflation" e-folds before the end of inflation."""
     def scalar_dissipation_function(self, analytic_power_spectrum=False,deltaR2_analytic =[]):
@@ -596,13 +596,17 @@ class Scalar_Dissipation_Function:
         Ne_len = self.Ne_len
         tauvals = self.tauvals
         Ne_inflation = self.Ne_inflation
+        Qconstant = self.Qconstant
         if analytic_power_spectrum:
             DeltaR2_analytic = deltaR2_analytic
         else:
             DeltaR2_analytic = np.zeros(len(Qvals))
             # Computing the analytic power spectrum:
             for i in trange(len(Qvals)):
-                Bg = Background(model, ph0s[i], Qvals[i])
+                if Qconstant:
+                    Bg = Background(model, ph0s[i], Qvals[i])
+                else:
+                    Bg = Background(model, ph0s[i], Qvals[i], Qconstant=False,Qvariables=[self.c,self.m])
                 DeltaR2_analytic[i] = Bg.analytic_power_spectrum(Ne_max, Ne_len, tauvals, Ne_inflation)
             print('Analytic power spectrum computed!')
         # Computing the growth factor, its signal and noise:
