@@ -45,7 +45,7 @@ We would like to acknowledge the Texas Advanced Computing Center (TACC) for prov
 
 If you use WarmSPy in your research work, please consider citing our paper:
 
-- [Universality of cosmological perturbations in warm inflation](https://doi.org/xxx/xxx-xxx)
+- [WarmSPy: a numerical study of cosmological perturbations in warm inflation](https://arxiv.org/abs/2306.16190)
 
 ## Contact
 For any inquiries or questions regarding WarmSPy, please contact montefalcone@utexas.edu .
